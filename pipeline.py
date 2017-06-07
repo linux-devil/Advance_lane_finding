@@ -18,9 +18,12 @@ Minv = cv2.getPerspectiveTransform(dst, src)
 window_width = 50
 window_height = 80 # Break image into 9 vertical layers since image height is 720
 margin = 100 # How much to slide left and right for searching
-
+set_prev = 0
 def process_frame(image):
     #undistorting
+    global left_fit_prev
+    global right_fit_prev
+    global set_prev
     undistorted_image = undistort(image)
     warped = warp_binarize_pipeline(image)
     undist = undistorted_image
@@ -60,6 +63,31 @@ def process_frame(image):
     if len(good_left_x)>0 and len(good_right_x)>0:
         left_fit = np.polyfit(good_left_x, good_left_y, 2)
         right_fit = np.polyfit(good_right_x, good_right_y, 2)
+
+        if set_prev == 0:
+            set_prev = 1
+            right_fit_prev = right_fit
+            left_fit_prev  = left_fit
+        ## Check error between current coefficient and on from previous frame
+        err_p_R = np.sum((right_fit[0]-right_fit_prev[0])**2) #/np.sum(right_fit_prev[0]**2)
+        err_p_R = np.sqrt(err_p_R)
+        if err_p_R>.0005:
+            right_fit = right_fit_prev
+            #col_R = col_R_prev
+        else:
+            right_fit = .05*right_fit+.95*right_fit_prev
+
+        right_fit_prev = right_fit
+        left_fit_prev = left_fit
+        ## Check error between current coefficient and on from previous frame
+        err_p_L = np.sum((left_fit[0]-left_fit_prev[0])**2) #/np.sum(right_fit_prev[0]**2)
+        err_p_L = np.sqrt(err_p_L)
+        if err_p_L>.0005:
+            left_fit =  left_fit_prev
+            #col_L = col_L_prev
+        else:
+            left_fit =  .05* left_fit+.95* left_fit_prev
+
         ploty = np.linspace(0, warped.shape[0]-1, warped.shape[0] )
         left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
         right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
@@ -78,7 +106,7 @@ def process_frame(image):
         # Combine the result with the original image
         result = cv2.addWeighted(undist, 1, newwarp, 0.3, 0)
 
-        curvature_string = curvature_radius(persp_transform_image, left_fit, right_fit)
+        curvature_string = curvature_radius(persp_transform_image, left_fitx, right_fitx,ploty,good_left_x,good_right_x,good_left_y,good_right_y)
         location_string = pos_from_center(persp_transform_image, leftx_base, rightx_base)
         font = cv2.FONT_HERSHEY_SIMPLEX
 
@@ -94,4 +122,4 @@ def process_video(input_path, output_path):
     output_clip = input_file.fl_image(process_frame)
     output_clip.write_videofile(output_path, audio=False)
 
-process_video('project_video.mp4', 'test_video_4_annotated.mp4')
+process_video('project_video.mp4', 'test_video_try_12.mp4')
