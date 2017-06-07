@@ -181,9 +181,10 @@ def curvature_radius(trans, left_fit, right_fit,ploty,leftx,rightx,lefty,righty)
     return curvature_string
 
 def pos_from_center(trans, leftx_base, rightx_base):
+    xm_per_pix = 3.7/700.0
     pos = trans.shape[1]/2
-    offset = abs(pos - (leftx_base + rightx_base)/2)
-    location_string = "Vehicle Dist. from Center: " + str(offset)
+    offset = abs(pos - (leftx_base + rightx_base)/2) * xm_per_pix
+    location_string = "Vehicle distance from center: " + "%0.2f" % offset +" m"
     return location_string
 
 def window_mask(width, height, img_ref, center,level):
