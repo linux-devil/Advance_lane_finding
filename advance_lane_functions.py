@@ -12,38 +12,138 @@ def undistort(img):
         load_dist_pickle = pickle.load(handle)
     undistort = cv2.undistort(img,load_dist_pickle["mtx"],load_dist_pickle["dist"],None,load_dist_pickle["mtx"])
     return undistort
+def color_mask(hsv,low,high):
+    # Return mask from HSV
+    mask = cv2.inRange(hsv, low, high)
+    return mask
 
-def binarize(img, s_thresh=(120, 255), sx_thresh=(20, 255),l_thresh=(40,255)):
-    img = np.copy(img)
-    # Convert to HLS color space and separate the V channel
-    hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS).astype(np.float)
-    #h_channel = hls[:,:,0]
-    l_channel = hls[:,:,1]
-    s_channel = hls[:,:,2]
-    # Sobel x
-    # sobelx = abs_sobel_thresh(img, orient='x', sobel_kernel=3, thresh=(0, 255))
-    # l_channel_col=np.dstack((l_channel,l_channel, l_channel))
-    sobelx = cv2.Sobel(l_channel, cv2.CV_64F, 1, 0) # Take the derivative in x
-    abs_sobelx = np.absolute(sobelx) # Absolute x derivative to accentuate lines away from horizontal
-    scaled_sobel = np.uint8(255*abs_sobelx/np.max(abs_sobelx))
+def binarize(image):
+    def bin_it(image, threshold):
+        output_bin = np.zeros_like(image)
+        output_bin[(image >= threshold[0]) & (image <= threshold[1])]=1
+        return output_bin
 
-    # Threshold x gradient
-    sxbinary = np.zeros_like(scaled_sobel)
-    sxbinary[(scaled_sobel >= sx_thresh[0]) & (scaled_sobel <= sx_thresh[1])] = 1
+    # convert image to hls colour space
+    hls = cv2.cvtColor(image, cv2.COLOR_RGB2HLS).astype(np.float)
 
-    # Threshold saturation channel
-    s_binary = np.zeros_like(s_channel)
-    s_binary[(s_channel >= s_thresh[0]) & (s_channel <= s_thresh[1])] = 1
+    # binary threshold values
+    bin_thresh = [20, 255]
 
-    # Threshold lightness
-    l_binary = np.zeros_like(l_channel)
-    l_binary[(l_channel >= l_thresh[0]) & (l_channel <= l_thresh[1])] = 1
+    # rgb thresholding for yellow
+    lower = np.array([225,180,0],dtype = "uint8")
+    upper = np.array([255, 255, 170],dtype = "uint8")
+    mask = cv2.inRange(image, lower, upper)
+    rgb_y = cv2.bitwise_and(image, image, mask = mask).astype(np.uint8)
+    rgb_y = cv2.cvtColor(rgb_y, cv2.COLOR_RGB2GRAY)
+    rgb_y = bin_it(rgb_y, bin_thresh)
 
-    channels = 255*np.dstack(( l_binary, sxbinary, s_binary)).astype('uint8')
-    binary = np.zeros_like(sxbinary)
-    binary[((l_binary == 1) & (s_binary == 1) | (sxbinary==1))] = 1
-    binary = 255*np.dstack((binary,binary,binary)).astype('uint8')
-    return binary,channels
+
+    # rgb thresholding for white (best)
+    lower = np.array([100,100,200],dtype = "uint8")
+    upper = np.array([255, 255, 255],dtype = "uint8")
+    mask = cv2.inRange(image, lower, upper)
+    rgb_w = cv2.bitwise_and(image, image, mask = mask).astype(np.uint8)
+    rgb_w = cv2.cvtColor(rgb_w, cv2.COLOR_RGB2GRAY)
+    rgb_w = bin_it(rgb_w, bin_thresh)
+
+
+    # hls thresholding for yellow
+    lower = np.array([20,120,80],dtype = "uint8")
+    upper = np.array([45, 200, 255],dtype = "uint8")
+    mask = cv2.inRange(hls, lower, upper)
+    hls_y = cv2.bitwise_and(image, image, mask = mask).astype(np.uint8)
+    hls_y = cv2.cvtColor(hls_y, cv2.COLOR_HLS2RGB)
+    hls_y = cv2.cvtColor(hls_y, cv2.COLOR_RGB2GRAY)
+    hls_y = bin_it(hls_y, bin_thresh)
+
+    im_bin = np.zeros_like(hls_y)
+    im_bin [(hls_y == 1)|(rgb_y==1)|(rgb_w==1)]= 1
+
+    return im_bin
+
+def binarize2(warped):
+    image_HSV = cv2.cvtColor(warped,cv2.COLOR_RGB2HSV)
+    white_hsv_low  = np.array([ 0,   0,   160])
+    white_hsv_high = np.array([ 255,  80, 255])
+    yellow_hsv_low  = np.array([ 0,  100,  100])
+    yellow_hsv_high = np.array([ 80, 255, 255])
+    mask_yellow = color_mask(image_HSV,yellow_hsv_low,yellow_hsv_high)
+    mask_white = color_mask(image_HSV,white_hsv_low,white_hsv_high)
+    mask_lane = cv2.bitwise_or(mask_yellow,mask_white)
+    image = gaussian_blur(warped, kernel=5)
+    image_HLS = cv2.cvtColor(warped,cv2.COLOR_RGB2HLS)
+    img_gs = image_HLS[:,:,1]
+    img_abs_x = abs_sobel_thresh(img_gs,'x',5,(50,225))
+    img_abs_y = abs_sobel_thresh(img_gs,'y',5,(50,225))
+    wraped2 = np.copy(cv2.bitwise_or(img_abs_x,img_abs_y))
+    img_gs = image_HLS[:,:,2]
+    sobel_c = sobel_combined(img_gs)
+    img_abs_x = abs_sobel_thresh(img_gs,'x',5,(50,255))
+    img_abs_y = abs_sobel_thresh(img_gs,'y',5,(50,255))
+    wraped3 = np.copy(cv2.bitwise_or(img_abs_x,img_abs_y))
+    image_cmb = cv2.bitwise_or(wraped2,wraped3)
+    image_cmb = gaussian_blur(image_cmb,25)
+    image_cmb1 = np.zeros_like(image_cmb)
+    image_cmb1[(mask_lane>=.5)|(image_cmb>=.5)]=1
+    return image_cmb1
+
+def gaussian_blur(img, kernel=5):
+    # Apply Gaussian Blur
+    blur = cv2.GaussianBlur(img,(kernel,kernel),0)
+    return blur
+
+def abs_sobel_thresh(img, orient='x', sobel_kernel=3, thresh=(0, 255)):
+    # Calculate directional gradient
+    # Apply threshold
+    if orient=='x':
+        img_s = cv2.Sobel(img,cv2.CV_64F, 1, 0)
+    else:
+        img_s = cv2.Sobel(img,cv2.CV_64F, 0, 1)
+    img_abs = np.absolute(img_s)
+    img_sobel = np.uint8(255*img_abs/np.max(img_abs))
+
+    binary_output = 0*img_sobel
+    binary_output[(img_sobel >= thresh[0]) & (img_sobel <= thresh[1])] = 1
+    return binary_output
+
+def mag_thresh(img, sobel_kernel=3, thresh=(0, 255)):
+    # Calculate gradient magnitude
+    # Apply threshold
+    img_sx = cv2.Sobel(img,cv2.CV_64F, 1, 0)
+    img_sy = cv2.Sobel(img,cv2.CV_64F, 0, 1)
+
+    img_s = np.sqrt(img_sx**2 + img_sy**2)
+    img_s = np.uint8(img_s*255/np.max(img_s))
+    binary_output = 0*img_s
+    binary_output[(img_s>=thresh[0]) & (img_s<=thresh[1]) ]=1
+    return binary_output
+
+def dir_threshold(img, sobel_kernel=3, thresh=(0, np.pi/2)):
+    # Calculate gradient direction
+    # Apply threshold
+    img_sx = cv2.Sobel(img,cv2.CV_64F,1,0, ksize=sobel_kernel)
+    img_sy = cv2.Sobel(img,cv2.CV_64F,0,1, ksize=sobel_kernel)
+    grad_s = np.arctan2(np.absolute(img_sy), np.absolute(img_sx))
+    binary_output = 0*grad_s # Remove this line
+    binary_output[(grad_s>=thresh[0]) & (grad_s<=thresh[1])] = 1
+    return binary_output
+
+def GaussianC_Adaptive_Threshold(img,kernel,cut_val):
+    # Apply Gaussian adaptive thresholding
+    img_cut = cv2.adaptiveThreshold(img,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,\
+            cv2.THRESH_BINARY,kernel,cut_val)
+    return img_cut
+
+def sobel_combined(image):
+    # Apply combined sobel filter
+    img_g_mag = mag_thresh(image,3,(20,150))
+    img_d_mag = dir_threshold(image,3,(.6,1.1))
+    img_abs_x = abs_sobel_thresh(image,'x',5,(50,200))
+    img_abs_y = abs_sobel_thresh(image,'y',5,(50,200))
+    sobel_combined = np.zeros_like(img_d_mag)
+    sobel_combined[((img_abs_x == 1) & (img_abs_y == 1)) | \
+               ((img_g_mag == 1) & (img_d_mag == 1))] = 1
+    return sobel_combined
 
 def get_perspective_transform(image, display=False):
     img_size = image.shape
@@ -63,15 +163,21 @@ def warp_pipeline(img):
 def warp_binarize_pipeline(img):
     undist = undistort(img)
     result,_  = get_perspective_transform(undist)
-    binary,_  = binarize(result)
-    return binary[:,:,0]
+    binary = binarize(result)
+    return binary
 
-def curvature_radius(trans, left_fit, right_fit):
-    y_eval = np.max(trans[0])
-    left_curverad = ((1 + (2*left_fit[0]*y_eval + left_fit[1])**2)**1.5) / np.absolute(2*left_fit[0])
-    right_curverad = ((1 + (2*right_fit[0]*y_eval + right_fit[1])**2)**1.5) / np.absolute(2*right_fit[0])
+def curvature_radius(trans, left_fit, right_fit,ploty,leftx,rightx,lefty,righty):
+    y_eval = np.max(ploty)
+    ym_per_pix = 30.0/720.0
+    xm_per_pix = 3.7/700.0
+    left_fit_cr = np.polyfit(ploty*ym_per_pix,left_fit*xm_per_pix,2)
+    right_fit_cr = np.polyfit(ploty*ym_per_pix,right_fit*xm_per_pix,2)
+    #left_fit_cr = np.polyfit(leftyy, zz, 2)
+    #right_fit_cr = np.polyfit(rightyy, yy, 2)
+    left_curverad = ((1 + (2*left_fit_cr[0]*y_eval*ym_per_pix + left_fit_cr[1])**2)**1.5) / np.absolute(2*left_fit_cr[0])
+    right_curverad = ((1 + (2*right_fit_cr[0]*y_eval*ym_per_pix + right_fit_cr[1])**2)**1.5) / np.absolute(2*right_fit_cr[0])
     radi = [left_curverad, right_curverad]
-    curvature_string = "Radius of Curvature: " + str(int(radi[0])) + ", " + str(int(radi[1]))
+    curvature_string = "Radius of Curvature: " + str(int(radi[0])) + "m, " + str(int(radi[1]))+"m"
     return curvature_string
 
 def pos_from_center(trans, leftx_base, rightx_base):
